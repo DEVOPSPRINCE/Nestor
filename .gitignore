@@ -1,0 +1,5 @@
+inventory.yml
+*.retry
+.vault_pass
+__pycache__/
+.DS_Store

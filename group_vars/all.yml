@@ -1,0 +1,27 @@
+# ============================================================
+# Common variables for every onboarded host
+# ============================================================
+# Central monitoring server — kept here as a single source of truth.
+# Change once if the central host changes.
+# ============================================================
+
+central_host_ip:           "80.188.223.202"
+central_loki_url:          "http://80.188.223.202:10346/loki/api/v1/push"
+central_prometheus_url:    "http://80.188.223.202:10346/prometheus"
+
+# Basic auth for the central nginx proxy (used by Alloy when pushing logs)
+alloy_basic_auth_user:     "alloy"
+alloy_basic_auth_password: "Alloy@push2026"
+
+# Component versions (pinned for reproducible deploys; update as needed)
+node_exporter_version:     "1.11.1"
+dcgm_exporter_version:     "3.3.5-3.4.1"
+ibstat_exporter_version:   "1.7.0"
+
+# Scrape ports
+node_exporter_port:        9100
+dcgm_exporter_port:        9400
+ib_exporter_port:          9315
+
+# Standard labels — applied to every metric for multi-tenant filtering
+# (client / env / role / etc. come from inventory per-host vars)

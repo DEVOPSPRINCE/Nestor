@@ -1,0 +1,64 @@
+# ============================================================
+# Inventory template — copy to inventory.yml and customize per client
+# ============================================================
+# Each host defines:
+#   client_name     MSP tenant identifier (drives Grafana folder + Slack channel)
+#   env             production | staging | development
+#   role            compute | monitor | edge | etc.
+#   node_type       gpu | cpu
+#   has_gpu         true | false   (controls dcgm-exporter install)
+#   has_infiniband  true | false   (for training customers — controls ib exporter)
+#   host_label      Short logical name (becomes 'instance' label everywhere)
+#   host_ip         Public IP (surfaced in alert payloads for quick SSH access)
+# ============================================================
+
+all:
+  children:
+
+    # ─── Internal monitor host (already deployed) ────────────────
+    monitor_server:
+      hosts:
+        central-monitor:
+          ansible_host:    80.188.223.202
+          ansible_port:    10345
+          ansible_user:    user
+          host_label:      central-monitor
+          host_ip:         80.188.223.202
+          client_name:     netsor-internal
+          env:             production
+          role:            monitor
+          node_type:       cpu
+          has_gpu:         false
+          has_infiniband:  false
+
+    # ─── Standard GPU compute node (CPU/Mem-only, no IB) ─────────
+    gpu_nodes:
+      hosts:
+        # Example: ACME Corp's first H100 node
+        acme-gpu-01:
+          ansible_host:    10.0.10.21        # actual public IP from provider
+          ansible_user:    bootstrap
+          host_label:      acme-gpu-01
+          host_ip:         10.0.10.21
+          client_name:     acme-corp
+          env:             production
+          role:            compute
+          node_type:       gpu
+          has_gpu:         true
+          has_infiniband:  false             # standard inference customer
+
+    # ─── Training customer (with InfiniBand) ─────────────────────
+    training_nodes:
+      hosts:
+        # Example: TrainingCo's H100 node with IB
+        trainco-h100-01:
+          ansible_host:    10.0.20.11
+          ansible_user:    bootstrap
+          host_label:      trainco-h100-01
+          host_ip:         10.0.20.11
+          client_name:     trainco
+          env:             production
+          role:            compute-training
+          node_type:       gpu
+          has_gpu:         true
+          has_infiniband:  true              # ← InfiniBand metrics enabled
