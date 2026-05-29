@@ -1,0 +1,44 @@
+---
+# ── Idempotent upsert of one target into one file ─────────────
+# Inputs (from include_tasks vars):
+#   target_file    — absolute path on central host
+#   target_host    — "host_ip:port"
+#   target_labels  — dict of labels to attach
+
+- name: upsert — read current targets ({{ target_file | basename }})
+  ansible.builtin.slurp:
+    src: "{{ target_file }}"
+  register: tgt_raw
+  failed_when: false
+  delegate_to: "{{ groups['monitor_server'][0] }}"
+
+- name: upsert — parse existing JSON or start empty
+  ansible.builtin.set_fact:
+    tgt_current: >-
+      {{ (tgt_raw.content | b64decode | from_json)
+         if (tgt_raw.content is defined and tgt_raw.content | length > 0)
+         else [] }}
+
+- name: upsert — drop any existing entry for this host
+  ansible.builtin.set_fact:
+    tgt_filtered: >-
+      {{ tgt_current
+         | rejectattr('labels.host', 'equalto', host_label)
+         | list }}
+
+- name: upsert — append fresh entry
+  ansible.builtin.set_fact:
+    tgt_new: >-
+      {{ tgt_filtered + [{
+           'targets': [target_host],
+           'labels':  target_labels
+         }] }}
+
+- name: upsert — write back ({{ target_file | basename }})
+  ansible.builtin.copy:
+    dest: "{{ target_file }}"
+    content: "{{ tgt_new | to_nice_json(indent=2) }}\n"
+    owner: prometheus
+    group: prometheus
+    mode: '0644'
+  delegate_to: "{{ groups['monitor_server'][0] }}"

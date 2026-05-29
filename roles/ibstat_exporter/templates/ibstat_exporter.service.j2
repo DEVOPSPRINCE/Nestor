@@ -1,0 +1,33 @@
+[Unit]
+Description=ibstat_exporter (Prometheus InfiniBand metrics)
+Documentation=https://github.com/Hewlett-Packard/ibstat_exporter
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ ibstat_exporter_user }}
+Group={{ ibstat_exporter_group }}
+ExecStart=/usr/local/bin/ibstat_exporter --web.listen-address=:{{ ibstat_exporter_port }}
+Restart=on-failure
+RestartSec=5
+
+# ── hardening ──────────────────────────────────────────────
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictNamespaces=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+[Install]
+WantedBy=multi-user.target

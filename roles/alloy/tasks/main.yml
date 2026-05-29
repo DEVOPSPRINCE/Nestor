@@ -1,0 +1,65 @@
+---
+# ── Grafana Alloy — install + config + run ────────────────────
+- name: Alloy — ensure Grafana apt repo
+  block:
+    - ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+
+    - name: Alloy — fetch Grafana GPG key
+      ansible.builtin.get_url:
+        url: https://apt.grafana.com/gpg.key
+        dest: /tmp/grafana.gpg.key
+        mode: '0644'
+
+    - name: Alloy — install GPG key (dearmored)
+      ansible.builtin.shell:
+        cmd: "gpg --dearmor < /tmp/grafana.gpg.key > /etc/apt/keyrings/grafana.gpg"
+        creates: /etc/apt/keyrings/grafana.gpg
+
+    - name: Alloy — add apt source list
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/grafana.list
+        content: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main\n"
+        mode: '0644'
+
+    - name: Alloy — apt update
+      ansible.builtin.apt:
+        update_cache: true
+  tags: [alloy, repo]
+
+- name: Alloy — install package
+  ansible.builtin.apt:
+    name: alloy
+    state: present
+  environment:
+    DEBIAN_FRONTEND: noninteractive
+    NEEDRESTART_MODE: a
+  tags: [alloy, install]
+
+- name: Alloy — add to systemd-journal group (read journal)
+  ansible.builtin.user:
+    name: alloy
+    groups: systemd-journal
+    append: true
+  notify: restart alloy
+  tags: [alloy, install]
+
+- name: Alloy — render config.alloy
+  ansible.builtin.template:
+    src: config.alloy.j2
+    dest: "{{ alloy_config_file }}"
+    owner: root
+    group: alloy
+    mode: '0640'
+  notify: restart alloy
+  tags: [alloy, config]
+
+- name: Alloy — enable + start
+  ansible.builtin.systemd:
+    name: alloy
+    state: started
+    enabled: true
+    daemon_reload: true
+  tags: [alloy, service]

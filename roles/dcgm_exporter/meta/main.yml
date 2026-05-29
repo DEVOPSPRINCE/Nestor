@@ -1,0 +1,16 @@
+galaxy_info:
+  role_name: dcgm_exporter
+  author: Nestor Platform Team
+  description: Install NVIDIA DCGM exporter as a systemd service (requires NVIDIA driver).
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+  galaxy_tags:
+    - gpu
+    - nvidia
+    - dcgm
+    - monitoring
+    - nestor
+dependencies: []

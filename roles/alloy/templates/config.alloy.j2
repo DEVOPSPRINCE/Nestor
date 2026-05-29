@@ -1,0 +1,65 @@
+// ─── Grafana Alloy — rendered by Ansible ─────────────────────────
+// Host:   {{ host_label }}
+// Client: {{ client_name }}
+// Env:    {{ env }}
+
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// ── Central Loki write target (via nginx auth-proxy) ────────────
+loki.write "central" {
+  endpoint {
+    url = "{{ central_loki_url }}"
+    basic_auth {
+      username = "{{ alloy_basic_auth_user }}"
+      password = "{{ alloy_basic_auth_password }}"
+    }
+  }
+  external_labels = {
+    client = "{{ client_name }}",
+    env    = "{{ env }}",
+    host   = "{{ host_label }}",
+  }
+}
+
+{% if alloy_ship_journal %}
+// ── systemd journal ────────────────────────────────────────────
+loki.source.journal "system" {
+  forward_to    = [loki.write.central.receiver]
+  relabel_rules = loki.relabel.journal.rules
+  labels        = { job = "systemd-journal" }
+}
+
+loki.relabel "journal" {
+  forward_to = []
+  rule {
+    source_labels = ["__journal__systemd_unit"]
+    target_label  = "unit"
+  }
+  rule {
+    source_labels = ["__journal__hostname"]
+    target_label  = "hostname"
+  }
+  rule {
+    source_labels = ["__journal_priority_keyword"]
+    target_label  = "priority"
+  }
+}
+{% endif %}
+
+{% if alloy_ship_varlogs %}
+// ── /var/log/*.log files ───────────────────────────────────────
+local.file_match "varlogs" {
+  path_targets = [{
+    __path__ = "{{ alloy_varlog_pattern }}",
+    job      = "varlog",
+  }]
+}
+
+loki.source.file "varlogs" {
+  targets    = local.file_match.varlogs.targets
+  forward_to = [loki.write.central.receiver]
+}
+{% endif %}

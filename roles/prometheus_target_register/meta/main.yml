@@ -1,0 +1,14 @@
+galaxy_info:
+  role_name: prometheus_target_register
+  author: Nestor Platform Team
+  description: Register a newly-onboarded node as a Prometheus scrape target on the central monitoring host.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+  galaxy_tags:
+    - prometheus
+    - monitoring
+    - nestor
+dependencies: []

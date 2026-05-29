@@ -1,0 +1,11 @@
+---
+# ── Prometheus target registration — defaults ─────────────────
+# File-based service discovery directory on the central host.
+prom_targets_dir:  /etc/prometheus/targets.d
+prom_reload_url:   http://127.0.0.1:9090/-/reload
+
+# Per-job target file names — one file per job per client keeps things tidy.
+prom_target_files:
+  node:           "{{ prom_targets_dir }}/node-{{ client_name }}.json"
+  dcgm:           "{{ prom_targets_dir }}/dcgm-{{ client_name }}.json"
+  ibstat:         "{{ prom_targets_dir }}/ibstat-{{ client_name }}.json"

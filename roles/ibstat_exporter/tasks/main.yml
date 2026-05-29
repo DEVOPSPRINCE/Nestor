@@ -1,0 +1,87 @@
+---
+# ── ibstat_exporter — install + run ───────────────────────────
+- name: ibstat — detect InfiniBand HCA
+  ansible.builtin.stat:
+    path: /sys/class/infiniband
+  register: ib_sysfs
+  tags: [ibstat, preflight]
+
+- name: ibstat — abort if no IB and strict mode
+  ansible.builtin.fail:
+    msg: |
+      No InfiniBand HCA detected on {{ inventory_hostname }}.
+      Set `ibstat_exporter_require_ib: false` or `has_infiniband: false`
+      to skip this role for nodes without IB hardware.
+  when:
+    - not ib_sysfs.stat.exists
+    - ibstat_exporter_require_ib | bool
+  tags: [ibstat, preflight]
+
+- name: ibstat — skip install (no IB and non-strict)
+  ansible.builtin.debug:
+    msg: "Skipping ibstat_exporter — no InfiniBand HCA on {{ inventory_hostname }}."
+  when:
+    - not ib_sysfs.stat.exists
+    - not ibstat_exporter_require_ib | bool
+  tags: [ibstat]
+
+- name: ibstat — system user
+  ansible.builtin.user:
+    name: "{{ ibstat_exporter_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    home: /var/lib/ibstat_exporter
+    create_home: false
+  when: ib_sysfs.stat.exists
+  tags: [ibstat, install]
+
+- name: ibstat — fetch + unpack release
+  ansible.builtin.unarchive:
+    src: "{{ ibstat_exporter_url }}"
+    dest: /tmp/
+    remote_src: true
+    creates: "/tmp/ibstat_exporter-{{ ibstat_exporter_version }}.linux-amd64/ibstat_exporter"
+  when: ib_sysfs.stat.exists
+  tags: [ibstat, install]
+
+- name: ibstat — install binary
+  ansible.builtin.copy:
+    src: "/tmp/ibstat_exporter-{{ ibstat_exporter_version }}.linux-amd64/ibstat_exporter"
+    dest: /usr/local/bin/ibstat_exporter
+    mode: '0755'
+    owner: root
+    group: root
+    remote_src: true
+  when: ib_sysfs.stat.exists
+  notify: restart ibstat_exporter
+  tags: [ibstat, install]
+
+- name: ibstat — systemd unit
+  ansible.builtin.template:
+    src: ibstat_exporter.service.j2
+    dest: /etc/systemd/system/ibstat_exporter.service
+    mode: '0644'
+  when: ib_sysfs.stat.exists
+  notify: restart ibstat_exporter
+  tags: [ibstat, service]
+
+- name: ibstat — enable + start
+  ansible.builtin.systemd:
+    name: ibstat_exporter
+    state: started
+    enabled: true
+    daemon_reload: true
+  when: ib_sysfs.stat.exists
+  tags: [ibstat, service]
+
+- name: ibstat — verify HTTP endpoint
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ibstat_exporter_port }}/metrics"
+    status_code: 200
+    return_content: false
+  retries: 5
+  delay: 2
+  register: ib_check
+  until: ib_check.status == 200
+  when: ib_sysfs.stat.exists
+  tags: [ibstat, verify]

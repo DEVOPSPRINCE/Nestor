@@ -1,0 +1,66 @@
+---
+# ── Register this node on the central Prometheus ──────────────
+# Runs on the central monitoring host via `delegate_to`.
+
+- name: prom-register — ensure targets.d exists
+  ansible.builtin.file:
+    path: "{{ prom_targets_dir }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: '0755'
+  delegate_to: "{{ groups['monitor_server'][0] }}"
+  run_once: false
+  tags: [register, prepare]
+
+- name: prom-register — upsert node_exporter target
+  ansible.builtin.include_tasks: upsert_target.yml
+  vars:
+    target_file:  "{{ prom_target_files.node }}"
+    target_host:  "{{ host_ip }}:9100"
+    target_labels:
+      client:    "{{ client_name }}"
+      env:       "{{ env }}"
+      host:      "{{ host_label }}"
+      host_ip:   "{{ host_ip }}"
+      role:      "{{ role }}"
+      node_type: "{{ node_type }}"
+  tags: [register, node]
+
+- name: prom-register — upsert dcgm target (GPU nodes)
+  ansible.builtin.include_tasks: upsert_target.yml
+  vars:
+    target_file:  "{{ prom_target_files.dcgm }}"
+    target_host:  "{{ host_ip }}:9400"
+    target_labels:
+      client:    "{{ client_name }}"
+      env:       "{{ env }}"
+      host:      "{{ host_label }}"
+      host_ip:   "{{ host_ip }}"
+      role:      "{{ role }}"
+      node_type: "{{ node_type }}"
+  when: has_gpu | default(false) | bool
+  tags: [register, dcgm]
+
+- name: prom-register — upsert ibstat target (IB nodes)
+  ansible.builtin.include_tasks: upsert_target.yml
+  vars:
+    target_file:  "{{ prom_target_files.ibstat }}"
+    target_host:  "{{ host_ip }}:9315"
+    target_labels:
+      client:    "{{ client_name }}"
+      env:       "{{ env }}"
+      host:      "{{ host_label }}"
+      host_ip:   "{{ host_ip }}"
+      role:      "{{ role }}"
+      node_type: "{{ node_type }}"
+  when: has_infiniband | default(false) | bool
+  tags: [register, ibstat]
+
+- name: prom-register — reload Prometheus
+  ansible.builtin.uri:
+    url: "{{ prom_reload_url }}"
+    method: POST
+    status_code: 200
+  delegate_to: "{{ groups['monitor_server'][0] }}"
+  tags: [register, reload]

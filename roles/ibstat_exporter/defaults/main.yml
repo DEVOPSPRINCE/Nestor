@@ -1,0 +1,11 @@
+---
+# ── ibstat_exporter — defaults ────────────────────────────────
+ibstat_exporter_version: "1.7.0"
+ibstat_exporter_port:    9315
+ibstat_exporter_user:    ibstat_exporter
+ibstat_exporter_group:   ibstat_exporter
+ibstat_exporter_url: >-
+  https://github.com/Hewlett-Packard/ibstat_exporter/releases/download/v{{ ibstat_exporter_version }}/ibstat_exporter-{{ ibstat_exporter_version }}.linux-amd64.tar.gz
+
+# Skip on hosts without InfiniBand HCAs unless overridden
+ibstat_exporter_require_ib: true

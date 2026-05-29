@@ -1,0 +1,9 @@
+---
+# ── NVIDIA DCGM exporter — defaults ───────────────────────────
+dcgm_exporter_version:    "3.3.5-3.4.1"
+dcgm_exporter_port:       9400
+dcgm_exporter_deb_url: >-
+  https://github.com/NVIDIA/dcgm-exporter/releases/download/{{ dcgm_exporter_version }}/dcgm-exporter_{{ dcgm_exporter_version }}_amd64.deb
+
+# Behaviour when nvidia-smi is missing on host
+dcgm_exporter_require_nvidia: true       # fail loudly if no NVIDIA driver

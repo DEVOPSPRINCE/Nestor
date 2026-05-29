@@ -1,0 +1,14 @@
+---
+# ── Grafana Alloy — defaults ──────────────────────────────────
+alloy_config_dir:           "/etc/alloy"
+alloy_config_file:          "{{ alloy_config_dir }}/config.alloy"
+
+# Central Loki — overridden in group_vars/all.yml typically
+central_loki_url:           "http://central.example.com:10346/loki/api/v1/push"
+alloy_basic_auth_user:      ""
+alloy_basic_auth_password:  ""
+
+# What logs to ship
+alloy_ship_journal:         true
+alloy_ship_varlogs:         true
+alloy_varlog_pattern:       "/var/log/*.log"

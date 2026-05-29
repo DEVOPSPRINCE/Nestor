@@ -1,0 +1,13 @@
+---
+# ── UFW scrape allowlist — defaults ───────────────────────────
+# Source IP allowed to reach exporter ports (central monitoring host).
+ufw_scrape_source_ip: "{{ central_host_ip }}"
+
+# Ports we allow from the central monitoring host
+ufw_scrape_ports:
+  - { port: 9100, proto: tcp, name: node_exporter }
+  - { port: 9400, proto: tcp, name: dcgm_exporter, when: "{{ has_gpu | default(false) | bool }}" }
+  - { port: 9315, proto: tcp, name: ibstat_exporter, when: "{{ has_infiniband | default(false) | bool }}" }
+
+# Whether to enable UFW (only if currently inactive)
+ufw_enable_if_inactive: true

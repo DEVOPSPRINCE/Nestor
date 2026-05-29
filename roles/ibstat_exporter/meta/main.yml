@@ -1,0 +1,16 @@
+galaxy_info:
+  role_name: ibstat_exporter
+  author: Nestor Platform Team
+  description: Install ibstat_exporter for InfiniBand port and counter metrics.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+  galaxy_tags:
+    - infiniband
+    - networking
+    - hpc
+    - monitoring
+    - nestor
+dependencies: []

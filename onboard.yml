@@ -1,342 +1,70 @@
 ---
-# ============================================================
-# Onboard a node into the central monitoring stack
-# ============================================================
-# Usage:
-#   ansible-playbook -i inventory.yml onboard.yml -l <hostname>
-#   ansible-playbook -i inventory.yml onboard.yml -l acme-gpu-01
+# ─────────────────────────────────────────────────────────────
+#  Nestor — Client Node Onboarding Playbook
+# ─────────────────────────────────────────────────────────────
+#  Run against a freshly-provisioned client node to:
+#   1. Install node_exporter
+#   2. Install Grafana Alloy (log shipper to central Loki)
+#   3. Install DCGM exporter (GPU nodes)
+#   4. Install ibstat_exporter (InfiniBand nodes)
+#   5. Tighten UFW so only the central monitor can scrape
+#   6. Register the host as a Prometheus target on the central host
 #
-# What it does (idempotent):
-#   1. Installs node_exporter (OS metrics)
-#   2. Installs Grafana Alloy (logs → central Loki, with basic-auth)
-#   3. Installs dcgm-exporter (only when has_gpu=true)
-#   4. Installs InfiniBand exporter (only when has_infiniband=true; training clients)
-#   5. Configures UFW to restrict scrape ports to central server only
-#   6. Updates central Prometheus scrape config with this node
-#   7. Reloads Prometheus on central
-#   8. Creates/updates client folder + dashboard in Grafana
-#   9. Verifies the node target is UP
-# ============================================================
+#  The central monitoring host is fixed (one per fleet) and is
+#  NOT redeployed by this playbook. It is referenced via the
+#  `monitor_server` group for target registration only.
+#
+#  Usage:
+#    ansible-playbook -i inventory.yml onboard.yml --limit <hostname>
+#    ansible-playbook -i inventory.yml onboard.yml --tags dcgm,verify
+# ─────────────────────────────────────────────────────────────
 
-- name: Onboard node — install exporters + Alloy + firewall
-  hosts: all:!monitor_server
+- name: Onboard client node into Nestor monitoring fleet
+  hosts: gpu_nodes:training_nodes
   become: true
   gather_facts: true
 
   pre_tasks:
-    - name: Required vars present
-      assert:
+    - name: Sanity — required inventory vars are set
+      ansible.builtin.assert:
         that:
-          - host_label is defined
-          - host_ip is defined
-          - client_name is defined
-          - env is defined
-          - role is defined
-          - node_type is defined
-          - has_gpu is defined
-          - has_infiniband is defined
-        msg: "Inventory is missing required per-host variables."
+          - host_label    is defined and host_label    | length > 0
+          - host_ip       is defined and host_ip       | length > 0
+          - client_name   is defined and client_name   | length > 0
+          - env           is defined and env           | length > 0
+          - role          is defined and role          | length > 0
+          - node_type     is defined and node_type     | length > 0
+        fail_msg: |
+          Missing required host vars. Every host in inventory.yml needs:
+            host_label, host_ip, client_name, env, role, node_type
+      tags: [always]
 
-    - name: System update + base packages
-      apt:
-        name: [curl, wget, tar, unzip, ufw, jq, gnupg, ca-certificates, apt-transport-https]
-        update_cache: yes
-      environment:
-        DEBIAN_FRONTEND: noninteractive
-        NEEDRESTART_MODE: a
+  roles:
+    - role: node_exporter
+      tags: [node_exporter]
 
-    - name: Add Grafana Labs apt key + repo (for Alloy)
-      block:
-        - file: { path: /etc/apt/keyrings, state: directory, mode: '0755' }
-        - shell: wget -qO- https://apt.grafana.com/gpg.key | gpg --dearmor > /etc/apt/keyrings/grafana.gpg
-          args:
-            creates: /etc/apt/keyrings/grafana.gpg
-        - copy:
-            dest: /etc/apt/sources.list.d/grafana.list
-            content: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main\n"
-        - apt: { update_cache: yes }
+    - role: alloy
+      tags: [alloy, logs]
 
-  # ─── ROLE 1: node_exporter ──────────────────────────────────
-  tasks:
-    - name: node_exporter — user
-      user:
-        name: node_exp
-        system: yes
-        create_home: no
-        shell: /usr/sbin/nologin
-        state: present
+    - role: dcgm_exporter
+      when: has_gpu | default(false) | bool
+      tags: [dcgm]
 
-    - name: node_exporter — download
-      get_url:
-        url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
-        dest: "/tmp/node_exporter.tgz"
-        mode: '0644'
+    - role: ibstat_exporter
+      when: has_infiniband | default(false) | bool
+      tags: [ibstat]
 
-    - name: node_exporter — extract
-      unarchive:
-        src: "/tmp/node_exporter.tgz"
-        dest: "/tmp/"
-        remote_src: yes
+    - role: ufw_scrape_ports
+      tags: [ufw, firewall]
 
-    - name: node_exporter — install binary
-      copy:
-        src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
-        dest: "/usr/local/bin/node_exporter"
-        mode: '0755'
-        remote_src: yes
+    - role: prometheus_target_register
+      tags: [register]
 
-    - name: node_exporter — systemd unit
-      copy:
-        dest: /etc/systemd/system/node_exporter.service
-        content: |
-          [Unit]
-          Description=Node Exporter
-          Wants=network-online.target
-          After=network-online.target
-
-          [Service]
-          User=node_exp
-          Group=node_exp
-          Type=simple
-          ExecStart=/usr/local/bin/node_exporter \
-              --web.listen-address=0.0.0.0:{{ node_exporter_port }} \
-              --collector.systemd --collector.processes
-          Restart=on-failure
-
-          [Install]
-          WantedBy=multi-user.target
-
-    - name: node_exporter — enabled + running
-      systemd:
-        name: node_exporter
-        state: started
-        enabled: yes
-        daemon_reload: yes
-
-  # ─── ROLE 2: Grafana Alloy (logs) ───────────────────────────
-    - name: Alloy — install via apt
-      apt: { name: alloy, state: present }
-
-    - name: Alloy — add to systemd-journal group
-      user:
-        name: alloy
-        groups: systemd-journal
-        append: yes
-
-    - name: Alloy — config
-      copy:
-        dest: /etc/alloy/config.alloy
-        owner: root
-        group: alloy
-        mode: '0640'
-        content: |
-          logging {
-            level  = "info"
-            format = "logfmt"
-          }
-
-          loki.write "central" {
-            endpoint {
-              url = "{{ central_loki_url }}"
-              basic_auth {
-                username = "{{ alloy_basic_auth_user }}"
-                password = "{{ alloy_basic_auth_password }}"
-              }
-            }
-            external_labels = {
-              client = "{{ client_name }}",
-              env    = "{{ env }}",
-              host   = "{{ host_label }}",
-            }
-          }
-
-          loki.source.journal "system" {
-            forward_to    = [loki.write.central.receiver]
-            relabel_rules = loki.relabel.journal.rules
-            labels        = { job = "systemd-journal" }
-          }
-
-          loki.relabel "journal" {
-            forward_to = []
-            rule {
-              source_labels = ["__journal__systemd_unit"]
-              target_label  = "unit"
-            }
-            rule {
-              source_labels = ["__journal__hostname"]
-              target_label  = "hostname"
-            }
-            rule {
-              source_labels = ["__journal_priority_keyword"]
-              target_label  = "priority"
-            }
-          }
-
-          local.file_match "varlogs" {
-            path_targets = [{ __path__ = "/var/log/*.log", job = "varlog" }]
-          }
-
-          loki.source.file "varlogs" {
-            targets    = local.file_match.varlogs.targets
-            forward_to = [loki.write.central.receiver]
-          }
-      notify: restart alloy
-
-    - name: Alloy — enabled + running
-      systemd: { name: alloy, state: started, enabled: yes }
-
-  # ─── ROLE 3: dcgm-exporter (only if has_gpu) ────────────────
-    - name: dcgm-exporter — install (GPU nodes only)
-      when: has_gpu | bool
-      block:
-        - name: dcgm-exporter — check if NVIDIA driver present
-          shell: command -v nvidia-smi
-          register: nvidia_check
-          changed_when: false
-          failed_when: false
-
-        - name: dcgm-exporter — install NVIDIA DCGM exporter binary
-          when: nvidia_check.rc == 0
-          block:
-            - get_url:
-                url: "https://github.com/NVIDIA/dcgm-exporter/releases/download/v{{ dcgm_exporter_version }}/dcgm-exporter_{{ dcgm_exporter_version }}_amd64.deb"
-                dest: /tmp/dcgm-exporter.deb
-                mode: '0644'
-            - apt: { deb: /tmp/dcgm-exporter.deb }
-            - systemd: { name: dcgm-exporter, state: started, enabled: yes, daemon_reload: yes }
-
-        - name: dcgm-exporter — skip (no NVIDIA driver detected, use demo exporter instead)
-          when: nvidia_check.rc != 0
-          debug:
-            msg: "No nvidia-smi found on {{ inventory_hostname }} — dcgm-exporter skipped. Use the demo-dcgm-exporter script if you want synthetic GPU metrics."
-
-  # ─── ROLE 4: InfiniBand exporter (training clients only) ────
-    - name: InfiniBand exporter — install (training clients only)
-      when: has_infiniband | bool
-      block:
-        - name: InfiniBand — install ibstat-exporter
-          get_url:
-            url: "https://github.com/treydock/ibstat_exporter/releases/download/v{{ ibstat_exporter_version }}/ibstat_exporter_{{ ibstat_exporter_version }}_linux_amd64.tar.gz"
-            dest: /tmp/ibstat_exporter.tgz
-            mode: '0644'
-        - unarchive:
-            src: /tmp/ibstat_exporter.tgz
-            dest: /tmp/
-            remote_src: yes
-        - copy:
-            src: "/tmp/ibstat_exporter_{{ ibstat_exporter_version }}_linux_amd64/ibstat_exporter"
-            dest: /usr/local/bin/ibstat_exporter
-            mode: '0755'
-            remote_src: yes
-        - copy:
-            dest: /etc/systemd/system/ibstat_exporter.service
-            content: |
-              [Unit]
-              Description=ibstat exporter (InfiniBand)
-              After=network-online.target
-
-              [Service]
-              Type=simple
-              ExecStart=/usr/local/bin/ibstat_exporter --web.listen-address=0.0.0.0:{{ ib_exporter_port }}
-              Restart=on-failure
-
-              [Install]
-              WantedBy=multi-user.target
-        - systemd: { name: ibstat_exporter, state: started, enabled: yes, daemon_reload: yes }
-
-  # ─── ROLE 5: UFW firewall ───────────────────────────────────
-    - name: UFW — default policies
-      ufw: { default: "{{ item.policy }}", direction: "{{ item.dir }}" }
-      loop:
-        - { dir: incoming, policy: deny }
-        - { dir: outgoing, policy: allow }
-
-    - name: UFW — allow SSH
-      ufw: { rule: allow, port: '22', proto: tcp, comment: 'SSH' }
-
-    - name: UFW — allow node_exporter from central
-      ufw: { rule: allow, src: "{{ central_host_ip }}", port: "{{ node_exporter_port }}", proto: tcp, comment: 'node_exporter scrape' }
-
-    - name: UFW — allow dcgm-exporter from central
-      when: has_gpu | bool
-      ufw: { rule: allow, src: "{{ central_host_ip }}", port: "{{ dcgm_exporter_port }}", proto: tcp, comment: 'dcgm scrape' }
-
-    - name: UFW — allow ibstat_exporter from central
-      when: has_infiniband | bool
-      ufw: { rule: allow, src: "{{ central_host_ip }}", port: "{{ ib_exporter_port }}", proto: tcp, comment: 'IB scrape' }
-
-    - name: UFW — enable
-      ufw: { state: enabled }
-
-  handlers:
-    - name: restart alloy
-      systemd: { name: alloy, state: restarted }
-
-
-# ============================================================
-# Phase 2 — update central Prometheus + create Grafana folder
-# ============================================================
-- name: Update central server — scrape config + Grafana folder
-  hosts: monitor_server
-  become: true
-  gather_facts: false
-  vars:
-    # All target nodes (from the previous play, by client)
-    onboarded_nodes: "{{ groups['all'] | difference(groups['monitor_server']) }}"
-
-  tasks:
-    - name: Build Prometheus targets file (file_sd) per client
-      template:
-        dest: "/etc/prometheus/file_sd/targets-{{ item }}.yml"
-        owner: prometheus
-        group: prometheus
-        mode: '0644'
-        content: |
-          {%- set client_hosts = onboarded_nodes | map('extract', hostvars) | selectattr('client_name','equalto',item) | list %}
-          - targets:
-            {%- for h in client_hosts %}
-              - "{{ h.host_ip }}:{{ node_exporter_port }}"
-            {%- endfor %}
-            labels:
-              client:    "{{ item }}"
-              job:       "node_exporter"
-          {% for h in client_hosts %}
-          {% endfor %}
-      loop: "{{ onboarded_nodes | map('extract', hostvars, 'client_name') | unique | list }}"
-      notify: reload prometheus
-
-    - name: Create Grafana provisioning entry for each new client
-      copy:
-        dest: "/etc/grafana/provisioning/dashboards/client-{{ item }}.yml"
-        content: |
-          apiVersion: 1
-          providers:
-            - name: '{{ item | capitalize }}'
-              orgId: 1
-              folder: '{{ item | capitalize }}'
-              type: file
-              disableDeletion: false
-              updateIntervalSeconds: 30
-              allowUiUpdates: true
-              options:
-                path: /var/lib/grafana/dashboards/clients/{{ item }}
-      loop: "{{ onboarded_nodes | map('extract', hostvars, 'client_name') | unique | list }}"
-      notify: restart grafana
-
-    - name: Ensure per-client dashboard directory exists
-      file:
-        path: "/var/lib/grafana/dashboards/clients/{{ item }}"
-        state: directory
-        owner: grafana
-        group: grafana
-        mode: '0755'
-      loop: "{{ onboarded_nodes | map('extract', hostvars, 'client_name') | unique | list }}"
-
-  handlers:
-    - name: reload prometheus
-      uri:
-        url: http://127.0.0.1:9090/prometheus/-/reload
-        method: POST
-
-    - name: restart grafana
-      systemd: { name: grafana-server, state: restarted }
+  post_tasks:
+    - name: Done — onboarding summary
+      ansible.builtin.debug:
+        msg: |
+          ✓ {{ host_label }} ({{ host_ip }}) onboarded for client '{{ client_name }}'.
+          Exporters: node{% if has_gpu | default(false) %}, dcgm{% endif %}{% if has_infiniband | default(false) %}, ibstat{% endif %}.
+          Registered on central monitor — Prometheus reloaded.
+      tags: [always]

@@ -1,0 +1,15 @@
+galaxy_info:
+  role_name: node_exporter
+  author: Nestor Platform Team
+  description: Install and configure Prometheus node_exporter as a systemd service.
+  license: MIT
+  min_ansible_version: "2.14"
+  platforms:
+    - name: Ubuntu
+      versions: [jammy, noble]
+  galaxy_tags:
+    - monitoring
+    - prometheus
+    - exporter
+    - nestor
+dependencies: []
